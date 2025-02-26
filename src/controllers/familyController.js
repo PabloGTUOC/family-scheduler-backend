@@ -111,7 +111,7 @@ exports.searchFamily = async (req, res) => {
 
 // Join an existing family
 exports.joinFamily = async (req, res) => {
-    const { userId, familyId, role } = req.body;
+    const { userId, familyId, role, customUnitForNewUser } = req.body;
 
     if (!userId || !familyId || !role) {
         return res.status(400).json({ error: "All fields (userId, familyId, role) are required." });
@@ -121,16 +121,24 @@ exports.joinFamily = async (req, res) => {
     try {
         await client.query('BEGIN');
 
-        // ✅ Step 1: Check if the Family Exists
-        const familyCheck = await client.query('SELECT * FROM families WHERE id = $1', [familyId]);
+        // ✅ Step 1: Retrieve Family Data (`CurrentUnitsDue`)
+        const familyCheck = await client.query(
+            'SELECT id, currentunitsdue FROM families WHERE id = $1',
+            [familyId]
+        );
 
         if (familyCheck.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: "Family not found." });
         }
 
+        let familyUnits = familyCheck.rows[0].currentunitsdue;
+
         // ✅ Step 2: Check if User Already Belongs to a Family
-        const userCheck = await client.query('SELECT family_id FROM users WHERE id = $1', [userId]);
+        const userCheck = await client.query(
+            'SELECT family_id FROM users WHERE id = $1',
+            [userId]
+        );
 
         if (userCheck.rows.length === 0) {
             await client.query('ROLLBACK');
@@ -142,21 +150,82 @@ exports.joinFamily = async (req, res) => {
             return res.status(400).json({ error: "User is already part of a family." });
         }
 
-        // ✅ Step 3: Assign User to Family with Role
+        // ✅ Step 3: Retrieve All Existing Users in the Family (`UserUnitBalance`)
+        const currentUsersResult = await client.query(
+            'SELECT id, userunitbalance FROM users WHERE family_id = $1',
+            [familyId]
+        );
+        const currentUsers = currentUsersResult.rows;
+
+        // ✅ Compute Total Available Units (`CurrentUnitsDue` + All User Balances)
+        let totalAvailableUnits = familyUnits;
+        currentUsers.forEach(user => {
+            totalAvailableUnits += user.userunitbalance;
+        });
+
+        console.log(`🔹 Total Available Units Before Redistribution: ${totalAvailableUnits}`);
+
+        // ✅ Step 4: Assign New User to Family
         await client.query(
             'UPDATE users SET family_id = $1, role = $2 WHERE id = $3',
             [familyId, role, userId]
         );
 
-        await client.query('COMMIT');
-
         console.log(`✅ User ${userId} joined Family ID: ${familyId} as ${role}`);
-        res.status(200).json({ message: "User successfully joined the family." });
+
+        // ✅ Step 5: Redistribute Units Among All Users
+        const totalUsers = currentUsers.length + 1; // Including the new user
+        let newUserUnits, remainingUnitsForExistingUsers;
+
+        if (customUnitForNewUser !== undefined) {
+            // ✅ If a custom unit value is provided, assign it to the new user
+            newUserUnits = customUnitForNewUser;
+            remainingUnitsForExistingUsers = totalAvailableUnits - newUserUnits;
+        } else {
+            // ✅ Default: Split the total units equally
+            newUserUnits = Math.floor(totalAvailableUnits / totalUsers);
+            remainingUnitsForExistingUsers = totalAvailableUnits - newUserUnits;
+        }
+
+        // ✅ Update New User Balance
+        await client.query(
+            'UPDATE users SET userunitbalance = $1 WHERE id = $2',
+            [newUserUnits, userId]
+        );
+
+        // ✅ Distribute Remaining Units Among Existing Users
+        const unitsPerExistingUser = Math.floor(remainingUnitsForExistingUsers / currentUsers.length);
+        const remainder = remainingUnitsForExistingUsers % currentUsers.length;
+
+        for (let i = 0; i < currentUsers.length; i++) {
+            let adjustedUnits = unitsPerExistingUser;
+            if (i < remainder) adjustedUnits += 1; // Distribute remainder
+
+            await client.query(
+                'UPDATE users SET userunitbalance = $1 WHERE id = $2',
+                [adjustedUnits, currentUsers[i].id]
+            );
+        }
+
+        console.log(`✅ Units Redistributed: New User ${userId} → ${newUserUnits}, Other Users Adjusted`);
+
+        // ✅ Step 6: Update Family's `CurrentUnitsDue`
+        await client.query(
+            'UPDATE families SET currentunitsdue = $1 WHERE id = $2',
+            [totalAvailableUnits, familyId]
+        );
+
+        await client.query('COMMIT');
+        return res.status(200).json({
+            message: "User successfully joined the family, and units were redistributed.",
+            newUserUnits,
+            totalUsers
+        });
 
     } catch (err) {
         await client.query('ROLLBACK');
         console.error("❌ Error joining family:", err);
-        res.status(500).json({ error: "Failed to join family" });
+        return res.status(500).json({ error: "Failed to join family" });
     } finally {
         client.release();
     }

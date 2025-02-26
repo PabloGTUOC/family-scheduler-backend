@@ -81,7 +81,7 @@ async function allocateUserUnits(familyId) {
             }
 
             // ✅ Step 4: Set each user's balance to `-OriginalUnitsDue`
-            await client.query('UPDATE users SET UserUnitBalance = $1 WHERE id = $2',
+            await client.query('UPDATE users SET userunitbalance = $1 WHERE id = $2',
                 [userUnits, users[i].id]
             );
             console.log(`✅ Assigned ${userUnits} units to User ID ${users[i].id}`);

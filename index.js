@@ -6,6 +6,7 @@ const authRoutes = require('./src/routes/authRoutes');
 const familyRoutes = require('./src/routes/familyRoutes');
 const logoutRoutes = require('./src/routes/logoutRoutes');
 const { updateUnitsDue } = require('./src/jobs/updateUnitsJob');
+const activityRoutes = require('./src/routes/activityRoutes');
 const app = express();
 const port = 3000;
 
@@ -21,6 +22,7 @@ app.use(bodyParser.json());
 app.use('/auth', authRoutes);
 app.use('/family', familyRoutes);
 app.use('/user', logoutRoutes);
+app.use('/activity', activityRoutes);
 
 app.get('/', (req, res) => {
     res.send('Welcome to Family Scheduler Backend!');
