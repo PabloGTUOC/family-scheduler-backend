@@ -15,13 +15,14 @@ exports.handleUserAuthentication = async (req, res) => {
         // ✅ Step 1: Check if the user exists
         const userExists = await pool.query('SELECT * FROM users WHERE google_id = $1', [googleId]);
 
+        let responseData;
+
         if (userExists.rows.length > 0) {
             const userId = userExists.rows[0].id;
             console.log(`✅ Existing user detected: ID ${userId}`);
 
             // ✅ Step 2: Log the user's login and fetch family & units
-            const userData = await exports.loginExistingUser(userId);
-            return res.status(200).json(userData);
+            responseData = await exports.loginExistingUser(userId);
 
         } else {
             // ✅ Step 3: Register new user
@@ -32,6 +33,10 @@ exports.handleUserAuthentication = async (req, res) => {
                 userId: newUserId.toString()
             });
         }
+
+        // ✅ Log the full response before sending it
+        console.log("🔹 Full JSON Response:", JSON.stringify(responseData, null, 2));
+        return res.status(200).json(responseData);
 
     } catch (err) {
         console.error("❌ Error in handleUserAuthentication:", err);

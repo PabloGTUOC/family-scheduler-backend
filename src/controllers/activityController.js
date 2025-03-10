@@ -1,4 +1,7 @@
 const pool = require('../config/dbConfig');
+const { google } = require('googleapis');
+const { OAuth2Client } = require('google-auth-library');
+
 
 exports.createActivity = async (req, res) => {
     try {
@@ -88,5 +91,79 @@ exports.createActivity = async (req, res) => {
     } catch (err) {
         console.error("❌ Error processing request:", err);
         return res.status(500).json({ error: "Internal Server Error" });
+    }
+};
+
+exports.deleteActivity = async (req, res) => {
+    try {
+        console.log("Received request to /delete_activity");
+        console.log("Request params:", req.params);
+
+        // Extract the activity ID from request parameters
+        const { activityId } = req.params;
+
+        // Validate input
+        if (!activityId) {
+            console.error("❌ Missing activity ID.");
+            return res.status(400).json({ error: "Missing activity ID" });
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // ✅ Step 1: Check if the activity exists
+            const activityCheck = await client.query(
+                `SELECT id, user_id, family_id, activity_type, units FROM activities WHERE id = $1`,
+                [activityId]
+            );
+
+            if (activityCheck.rows.length === 0) {
+                await client.query('ROLLBACK');
+                console.error(`❌ No activity found with ID ${activityId}`);
+                return res.status(404).json({ error: "Activity not found" });
+            }
+
+            const activity = activityCheck.rows[0];
+
+            // ✅ Step 2: Delete the activity
+            await client.query(`DELETE FROM activities WHERE id = $1`, [activityId]);
+            console.log(`✅ Deleted activity with ID ${activityId}`);
+
+            // ✅ Step 3: Adjust balances if it's a family activity
+            if (activity.activity_type === 'family') {
+                const { user_id: userId, family_id: familyId, units } = activity;
+
+                // Adjust user's unit balance
+                await client.query(
+                    `UPDATE users SET UserUnitBalance = UserUnitBalance - $1 WHERE id = $2`,
+                    [units, userId]
+                );
+                console.log(`🔹 Adjusted User ID ${userId}'s balance by -${units} units`);
+
+                // Adjust family unit balance (if applicable)
+                if (familyId) {
+                    await client.query(
+                        `UPDATE families SET CurrentUnitsDue = CurrentUnitsDue + $1 WHERE id = $2`,
+                        [units, familyId]
+                    );
+                    console.log(`🔹 Adjusted Family ID ${familyId}, increasing CurrentUnitsDue by ${units}`);
+                }
+            }
+
+            await client.query('COMMIT');
+            return res.status(200).json({ message: "Activity deleted successfully" });
+
+        } catch (err) {
+            await client.query('ROLLBACK');
+            console.error("❌ Error deleting activity:", err);
+            return res.status(500).json({ error: "Failed to delete activity" });
+        } finally {
+            client.release();
+        }
+
+    } catch (err) {
+        console.error("❌ Error processing request:", err);
+        return res.status(500).json({ error: "Internal server error" });
     }
 };

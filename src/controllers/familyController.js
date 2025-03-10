@@ -1,6 +1,7 @@
 const pool = require('../config/dbConfig');
 const { allocateUserUnits } = require('../jobs/updateUnitsJob');
 
+
 //Create family and for first time update the UnitsDue
 exports.createFamily = async (req, res) => {
     const { userId, familyName, role, protagonistName, protagonistType } = req.body;
@@ -64,7 +65,24 @@ exports.createFamily = async (req, res) => {
         }
 
         // ✅ Send response **after everything is completed**
-        res.status(201).json({ message: "Family created successfully", familyId, unitsDue });
+        const familyData = await pool.query(
+            `SELECT id, name, originalunitsdue, currentunitsdue FROM families WHERE id = $1`,
+            [familyId]
+        );
+        const userBalanceData = await pool.query(
+            `SELECT UserUnitBalance FROM users WHERE id = $1`,
+            [userId]
+        );
+        return res.status(201).json({
+            message: "Family created successfully",
+            familyId: familyData.rows[0].id,
+            familyName: familyData.rows[0].name,  // ✅ Include family name
+            originalUnitsDue: familyData.rows[0].originalunitsdue,  // ✅ Include Original Units Due
+            currentUnitsDue: familyData.rows[0].currentunitsdue,  // ✅ Include Current Units Due
+            userUnitBalance: userBalanceData.rows[0].userunitbalance,  // ✅ Include User's Balance
+        });
+
+
 
     } catch (err) {
         await client.query('ROLLBACK');
